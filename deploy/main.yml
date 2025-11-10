@@ -1,0 +1,301 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Contacts App - ECS (Fargate) + NLB (internal) + API Gateway (REST via VPC Link)
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC donde vive todo
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subredes (usaremos públicas en tu caso)
+  VpcCidr:
+    Type: String
+    Description: CIDR de la VPC (p.ej. 172.31.0.0/16)
+  ContainerImage:
+    Type: String
+    Description: ECR image URI (ej. 905418226902.dkr.ecr.us-east-1.amazonaws.com/contacts-app:latest)
+  DesiredCount:
+    Type: Number
+    Default: 1
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+  TableName:
+    Type: String
+    Default: contacts
+  TaskRoleArn:
+    Type: String
+    Description: ARN del Role de Tarea (usa LabRole)
+  ExecutionRoleArn:
+    Type: String
+    Description: ARN del Role de Ejecución (usa LabRole)
+  StageName:
+    Type: String
+    Default: prod2
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: contacts-cluster-2
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks (8080)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0        # abre para simplificar pruebas; afinamos luego si quieres
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internal
+      Subnets: !Ref PrivateSubnets
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Protocol: TCP
+      Port: 8080
+      VpcId: !Ref VpcId
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 8080
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: contacts-task-2
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      TaskRoleArn: !Ref TaskRoleArn
+      ContainerDefinitions:
+        - Name: contacts-container-2
+          Image: !Ref ContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: DB_TYPE
+              Value: dynamodb
+            - Name: DB_DYNAMONAME
+              Value: !Ref TableName
+            - Name: AWS_REGION
+              Value: !Ref AwsRegion
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/contacts-2
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: contacts
+              awslogs-create-group: "true"
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
+    Properties:
+      ServiceName: contacts-service-2
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref PrivateSubnets         # usamos aquí tus subredes públicas
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      LoadBalancers:
+        - ContainerName: contacts-container-2
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: contacts-api-2
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  VpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: contacts-vpclink-2
+      TargetArns: [!Ref NLB]
+
+  ApiResourceContacts:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: contacts
+
+  ApiResourceContactId:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref ApiResourceContacts
+      PathPart: "{id}"
+
+  GetContacts:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResourceContacts
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+
+  PostContacts:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResourceContacts
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+
+  GetContactById:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResourceContactId
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  PutContactById:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResourceContactId
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: PUT
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  DeleteContactById:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResourceContactId
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: DELETE
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: contacts-api-key-2
+      Enabled: true
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GetContacts
+      - PostContacts
+      - GetContactById
+      - PutContactById
+      - DeleteContactById
+    Properties:
+      RestApiId: !Ref RestApi
+      Description: Deployment for contacts-api-2
+
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref Deployment
+      StageName: !Ref StageName
+
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: Stage
+    Properties:
+      UsagePlanName: contacts-plan-2
+      Throttle:
+        RateLimit: 10
+        BurstLimit: 5
+      ApiStages:
+        - ApiId: !Ref RestApi
+          Stage: !Ref StageName
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    DependsOn:
+      - UsagePlan
+      - ApiKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+Outputs:
+  NlbDnsName:
+    Value: !GetAtt NLB.DNSName
+  ApiInvokeUrl:
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"

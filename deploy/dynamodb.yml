@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Contacts DynamoDB table (on-demand) with tag GSI"
+Parameters:
+  TableName:
+    Type: String
+    Default: contacts
+Resources:
+  ContactsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: tag
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: tag-index
+          KeySchema:
+            - AttributeName: tag
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+Outputs:
+  TableName:
+    Value: !Ref ContactsTable
+  TableArn:
+    Value: !GetAtt ContactsTable.Arn

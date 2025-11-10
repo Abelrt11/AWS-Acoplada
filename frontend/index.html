@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contacts – Minimal CRUD</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; max-width: 900px; }
+    header { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    input, select, button { padding: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f5f5f5; }
+    .row-actions { display: flex; gap: 6px; }
+    #cfg { background: #fff3cd; padding: 10px; border: 1px solid #ffeeba; margin-bottom: 16px; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Contacts</h1>
+
+  <div id="cfg">
+    <strong>Config</strong> — API URL & API Key (saved in localStorage)<br/>
+    <input id="apiUrl" placeholder="https://{rest-id}.execute-api.{region}.amazonaws.com/prod" size="60" />
+    <input id="apiKey" placeholder="x-api-key value" size="30" />
+    <button id="saveCfg">Save</button>
+    <span class="muted" id="cfgStatus"></span>
+  </div>
+
+  <header>
+    <input id="name" placeholder="Name" />
+    <input id="email" placeholder="Email" />
+    <select id="tag">
+      <option value="other">other</option>
+      <option value="friend">friend</option>
+      <option value="work">work</option>
+      <option value="family">family</option>
+    </select>
+    <button id="btnCreate">Create</button>
+    <span class="muted" id="msg"></span>
+  </header>
+
+  <div>
+    <label>Filter by tag:</label>
+    <select id="filterTag">
+      <option value="">(all)</option>
+      <option value="other">other</option>
+      <option value="friend">friend</option>
+      <option value="work">work</option>
+      <option value="family">family</option>
+    </select>
+    <button id="btnReload">Reload</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>Tag</th><th>Actions</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function loadCfg() {
+  $('apiUrl').value = localStorage.getItem('API_URL') || '';
+  $('apiKey').value = localStorage.getItem('API_KEY') || '';
+}
+function saveCfg() {
+  localStorage.setItem('API_URL', $('apiUrl').value.trim());
+  localStorage.setItem('API_KEY', $('apiKey').value.trim());
+  $('cfgStatus').textContent = 'Saved ✓';
+  setTimeout(()=>$('cfgStatus').textContent='', 1200);
+}
+
+async function apiRequest(path, method='GET', body=null) {
+  const base = localStorage.getItem('API_URL') || '';
+  const key = localStorage.getItem('API_KEY') || '';
+  if (!base || !key) throw new Error('Configure API URL and API KEY first');
+  const headers = { 'Content-Type': 'application/json', 'x-api-key': key };
+  const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : null });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`HTTP ${res.status}: ${t}`);
+  }
+  if (res.status === 204) return null;
+  return await res.json();
+}
+
+async function reload() {
+  try {
+    const tag = $('filterTag').value;
+    const qs = tag ? `?tag=${encodeURIComponent(tag)}` : '';
+    const data = await apiRequest('/contacts' + qs, 'GET');
+    const tbody = $('rows');
+    tbody.innerHTML = '';
+    data.forEach(c => tbody.appendChild(renderRow(c)));
+    $('msg').textContent = `Loaded ${data.length} contacts`;
+  } catch (e) {
+    $('msg').textContent = e.message;
+  }
+}
+
+function renderRow(c) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input value="${c.name}"/></td>
+    <td><input value="${c.email}"/></td>
+    <td>
+      <select>
+        <option ${c.tag==='other'?'selected':''} value="other">other</option>
+        <option ${c.tag==='friend'?'selected':''} value="friend">friend</option>
+        <option ${c.tag==='work'?'selected':''} value="work">work</option>
+        <option ${c.tag==='family'?'selected':''} value="family">family</option>
+      </select>
+    </td>
+    <td class="row-actions">
+      <button class="save">Save</button>
+      <button class="del">Delete</button>
+    </td>`;
+  tr.querySelector('.save').onclick = async () => {
+    try {
+      const name = tr.children[0].querySelector('input').value;
+      const email = tr.children[1].querySelector('input').value;
+      const tag = tr.children[2].querySelector('select').value;
+      const updated = await apiRequest(`/contacts/${c.id}`, 'PUT', { name, email, tag });
+      Object.assign(c, updated);
+      $('msg').textContent = 'Saved ✓';
+    } catch (e) { $('msg').textContent = e.message; }
+  };
+  tr.querySelector('.del').onclick = async () => {
+    if (!confirm('Delete contact?')) return;
+    try {
+      await apiRequest(`/contacts/${c.id}`, 'DELETE');
+      tr.remove();
+      $('msg').textContent = 'Deleted ✓';
+    } catch (e) { $('msg').textContent = e.message; }
+  };
+  return tr;
+}
+
+$('btnCreate').onclick = async () => {
+  try {
+    const name = $('name').value.trim();
+    const email = $('email').value.trim();
+    const tag = $('tag').value;
+    if (!name || !email) throw new Error('Name and email are required');
+    await apiRequest('/contacts', 'POST', { name, email, tag });
+    $('name').value = ''; $('email').value=''; $('tag').value='other';
+    reload();
+  } catch (e) { $('msg').textContent = e.message; }
+};
+
+$('btnReload').onclick = reload;
+$('saveCfg').onclick = saveCfg;
+loadCfg();
+reload();
+</script>
+</body>
+</html>
