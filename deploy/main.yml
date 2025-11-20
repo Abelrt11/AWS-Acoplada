@@ -48,7 +48,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0        # abre para simplificar pruebas; afinamos luego si quieres
+          CidrIp: 0.0.0.0/0      
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -124,7 +124,7 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          Subnets: !Ref PrivateSubnets         # usamos aquí tus subredes públicas
+          Subnets: !Ref PrivateSubnets        
           SecurityGroups:
             - !Ref ServiceSecurityGroup
       LoadBalancers:
@@ -299,3 +299,4 @@ Outputs:
     Value: !GetAtt NLB.DNSName
   ApiInvokeUrl:
     Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+
