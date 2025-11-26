@@ -34,6 +34,7 @@ Parameters:
     Default: prod2
 
 Resources:
+
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -48,7 +49,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0      
+          CidrIp: !Ref VpcCidr
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -124,7 +125,7 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          Subnets: !Ref PrivateSubnets        
+          Subnets: !Ref PrivateSubnets
           SecurityGroups:
             - !Ref ServiceSecurityGroup
       LoadBalancers:
@@ -170,7 +171,10 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: GET
-        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
+        Uri:
+          Fn::Sub:
+            - "http://${Dns}:8080/contacts"
+            - Dns: !GetAtt NLB.DNSName
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
 
@@ -185,7 +189,10 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
+        Uri:
+          Fn::Sub:
+            - "http://${Dns}:8080/contacts"
+            - Dns: !GetAtt NLB.DNSName
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
 
@@ -202,7 +209,10 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: GET
-        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        Uri:
+          Fn::Sub:
+            - "http://${Dns}:8080/contacts/{id}"
+            - Dns: !GetAtt NLB.DNSName
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -221,7 +231,10 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: PUT
-        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        Uri:
+          Fn::Sub:
+            - "http://${Dns}:8080/contacts/{id}"
+            - Dns: !GetAtt NLB.DNSName
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -240,7 +253,10 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: DELETE
-        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
+        Uri:
+          Fn::Sub:
+            - "http://${Dns}:8080/contacts/{id}"
+            - Dns: !GetAtt NLB.DNSName
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -271,7 +287,6 @@ Resources:
       DeploymentId: !Ref Deployment
       StageName: !Ref StageName
 
-
   UsagePlan:
     Type: AWS::ApiGateway::UsagePlan
     DependsOn: Stage
@@ -299,4 +314,3 @@ Outputs:
     Value: !GetAtt NLB.DNSName
   ApiInvokeUrl:
     Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
-
