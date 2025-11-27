@@ -10,7 +10,7 @@ Parameters:
     Description: 
   VpcCidr:
     Type: String
-    Description: CIDR de la VPC (p.ej. 172.31.0.0/16)
+    Description: CIDR de la VPC 
   ContainerImage:
     Type: String
     Description: ECR image URI (ej. 905418226902.dkr.ecr.us-east-1.amazonaws.com/contacts-app:latest)
@@ -314,4 +314,5 @@ Outputs:
     Value: !GetAtt NLB.DNSName
   ApiInvokeUrl:
     Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+
 
