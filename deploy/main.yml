@@ -7,7 +7,7 @@ Parameters:
     Description: VPC donde vive todo
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subredes (usaremos públicas en tu caso)
+    Description: 
   VpcCidr:
     Type: String
     Description: CIDR de la VPC (p.ej. 172.31.0.0/16)
@@ -314,3 +314,4 @@ Outputs:
     Value: !GetAtt NLB.DNSName
   ApiInvokeUrl:
     Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+
