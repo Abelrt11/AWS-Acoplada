@@ -1,19 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Contacts App - ECS (Fargate) + NLB (internal) + API Gateway (REST via VPC Link)
+Description: Contacts App - ECS Fargate + NLB interno + API Gateway REST
 
 Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: VPC donde vive todo
+    Description: VPC donde vive la aplicación
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: 
+    Description: Subredes donde se ejecuta ECS y el NLB
   VpcCidr:
     Type: String
-    Description: CIDR de la VPC 
+    Description: Rango CIDR desde el que se permite tráfico interno a ECS
   ContainerImage:
     Type: String
-    Description: ECR image URI (ej. 905418226902.dkr.ecr.us-east-1.amazonaws.com/contacts-app:latest)
+    Description: URI de la imagen en ECR
   DesiredCount:
     Type: Number
     Default: 1
@@ -25,16 +25,15 @@ Parameters:
     Default: contacts
   TaskRoleArn:
     Type: String
-    Description: ARN del Role de Tarea (usa LabRole)
+    Description: ARN del rol de tarea
   ExecutionRoleArn:
     Type: String
-    Description: ARN del Role de Ejecución (usa LabRole)
+    Description: ARN del rol de ejecución
   StageName:
     Type: String
     Default: prod2
 
 Resources:
-
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -43,16 +42,68 @@ Resources:
   ServiceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for ECS tasks (8080)
+      GroupDescription: Security group para tareas ECS en 8080
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
+          CidrIp: 172.31.64.0/20
+
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group para endpoints privados AWS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: !Ref VpcCidr
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
+
+  EcrApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.api"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref PrivateSubnets
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  EcrDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.dkr"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref PrivateSubnets
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref PrivateSubnets
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  DynamoEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref PrivateSubnets
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
 
   NLB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -88,7 +139,8 @@ Resources:
       Cpu: '256'
       Memory: '512'
       NetworkMode: awsvpc
-      RequiresCompatibilities: [FARGATE]
+      RequiresCompatibilities:
+        - FARGATE
       ExecutionRoleArn: !Ref ExecutionRoleArn
       TaskRoleArn: !Ref TaskRoleArn
       ContainerDefinitions:
@@ -138,13 +190,15 @@ Resources:
     Properties:
       Name: contacts-api-2
       EndpointConfiguration:
-        Types: [REGIONAL]
+        Types:
+          - REGIONAL
 
   VpcLink:
     Type: AWS::ApiGateway::VpcLink
     Properties:
       Name: contacts-vpclink-2
-      TargetArns: [!Ref NLB]
+      TargetArns:
+        - !Ref NLB
 
   ApiResourceContacts:
     Type: AWS::ApiGateway::Resource
@@ -171,10 +225,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: GET
-        Uri:
-          Fn::Sub:
-            - "http://${Dns}:8080/contacts"
-            - Dns: !GetAtt NLB.DNSName
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
 
@@ -189,10 +240,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: POST
-        Uri:
-          Fn::Sub:
-            - "http://${Dns}:8080/contacts"
-            - Dns: !GetAtt NLB.DNSName
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts"
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
 
@@ -209,10 +257,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: GET
-        Uri:
-          Fn::Sub:
-            - "http://${Dns}:8080/contacts/{id}"
-            - Dns: !GetAtt NLB.DNSName
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -231,10 +276,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: PUT
-        Uri:
-          Fn::Sub:
-            - "http://${Dns}:8080/contacts/{id}"
-            - Dns: !GetAtt NLB.DNSName
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -253,10 +295,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: DELETE
-        Uri:
-          Fn::Sub:
-            - "http://${Dns}:8080/contacts/{id}"
-            - Dns: !GetAtt NLB.DNSName
+        Uri: !Sub "http://${NLB.DNSName}:8080/contacts/{id}"
         ConnectionType: VPC_LINK
         ConnectionId: !Ref VpcLink
         RequestParameters:
@@ -278,7 +317,7 @@ Resources:
       - DeleteContactById
     Properties:
       RestApiId: !Ref RestApi
-      Description: Deployment for contacts-api-2
+      Description: Deployment de contacts-api-2
 
   Stage:
     Type: AWS::ApiGateway::Stage
@@ -314,5 +353,3 @@ Outputs:
     Value: !GetAtt NLB.DNSName
   ApiInvokeUrl:
     Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
-
-
